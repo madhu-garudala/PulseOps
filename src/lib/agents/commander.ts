@@ -55,6 +55,6 @@ export async function runCommander(args: {
     validator: CommanderZod,
     system: SYSTEM,
     user,
-    maxCompletionTokens: 1200,
+    maxCompletionTokens: 1600,
   });
 }

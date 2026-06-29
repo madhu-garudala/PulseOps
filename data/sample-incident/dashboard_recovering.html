@@ -1,0 +1,105 @@
+<!doctype html>
+<!--
+  Live Mode recovery screenshot (situational awareness only). Same dashboard as
+  dashboard.html but AFTER mitigation: latency/pool/CPU back to healthy, error
+  rate near zero, topology recovering. This honestly drives severity DE-escalation
+  on the final Live Mode tick (§7.2).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Prod Overview — Data Tier (recovering)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 1000px; background: #0b0f17; color: #e6edf3;
+    font: 14px/1.4 -apple-system, "SF Pro Text", Segoe UI, Roboto, sans-serif;
+    padding: 22px 24px;
+  }
+  .top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+  h1 { font-size: 18px; font-weight: 650; letter-spacing: .2px; }
+  .env { font-size: 12px; color: #8b949e; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { background: #111722; border: 1px solid #1e2733; border-radius: 12px; padding: 14px 16px; }
+  .card .label { font-size: 12px; color: #9aa6b2; text-transform: uppercase; letter-spacing: .6px; }
+  .card .value { font-size: 30px; font-weight: 700; margin-top: 6px; }
+  .card .sub { font-size: 12px; color: #8b949e; margin-top: 4px; }
+  .red { color: #ff6b6b; } .amber { color: #ffd166; } .green { color: #4ade80; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+  .pill.ok { background: rgba(74,222,128,.14); color:#86efac; border:1px solid rgba(74,222,128,.4); }
+  .bar { height: 10px; border-radius: 6px; background:#1e2733; margin-top:10px; overflow:hidden; }
+  .bar > span { display:block; height:100%; }
+  .wide { grid-column: span 3; }
+  .topo { display:flex; align-items:center; gap:14px; margin-top:6px; }
+  .node { padding:8px 14px; border-radius:10px; border:1px solid #2a3744; background:#0f1622; font-weight:600; }
+  .node.ok  { border-color:#2f9e6b; color:#7ee2af; }
+  .arrow { color:#5b6776; font-size:18px; }
+  svg { display:block; margin-top:10px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>Production Overview <span class="pill ok">RECOVERING</span></h1>
+    <div class="env">cluster: prod-us-west-2 · primary: pg-orders-01 · 14:48 local</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">DB query latency · p99</div>
+      <div class="value green">176 ms <span class="pill ok">▼ recovering</span></div>
+      <div class="sub">down from 487 ms · trending to baseline</div>
+      <svg width="300" height="48" viewBox="0 0 300 48">
+        <polyline fill="none" stroke="#4ade80" stroke-width="2"
+          points="0,6 40,9 80,14 120,20 150,26 180,32 210,37 240,40 270,42 300,43"/>
+      </svg>
+    </div>
+
+    <div class="card">
+      <div class="label">Connection pool · primary</div>
+      <div class="value green">118 / 400</div>
+      <div class="sub">healthy · pool raised 200→400, 0 waiting</div>
+      <div class="bar"><span style="width:30%; background:#4ade80;"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Replica lag</div>
+      <div class="value green">1.2 s <span class="pill ok">▼</span></div>
+      <div class="sub">replicas caught up to primary</div>
+      <div class="bar"><span style="width:12%; background:#4ade80;"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Slow queries (&gt;1s)</div>
+      <div class="value green">12 / min</div>
+      <div class="sub">lock contention cleared</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Primary CPU</div>
+      <div class="value green">38%</div>
+      <div class="sub">IO wait normal · checkpoint caught up</div>
+      <div class="bar"><span style="width:38%; background:#4ade80;"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Checkout error rate</div>
+      <div class="value green">0.4%</div>
+      <div class="sub">write path recovered · reads healthy</div>
+    </div>
+
+    <div class="card wide">
+      <div class="label">Service topology</div>
+      <div class="topo">
+        <span class="node ok">web</span>
+        <span class="arrow">→</span>
+        <span class="node ok">api-gateway</span>
+        <span class="arrow">→</span>
+        <span class="node ok">payments-svc</span>
+        <span class="arrow">→</span>
+        <span class="node ok">pg-orders-01 (primary) ✓ recovered</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
