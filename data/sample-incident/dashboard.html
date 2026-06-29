@@ -1,0 +1,107 @@
+<!doctype html>
+<!--
+  Sample-incident dashboard (situational awareness ONLY — §5 visual-token policy).
+  Deliberately DB-tier themed: the dominant red signals are database latency and
+  connection-pool saturation, NOT the 5xx symptom the logs/complaint describe.
+  This is the honest text-vs-screenshot tension from §9.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Prod Overview — Data Tier</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 1000px; background: #0b0f17; color: #e6edf3;
+    font: 14px/1.4 -apple-system, "SF Pro Text", Segoe UI, Roboto, sans-serif;
+    padding: 22px 24px;
+  }
+  .top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+  h1 { font-size: 18px; font-weight: 650; letter-spacing: .2px; }
+  .env { font-size: 12px; color: #8b949e; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { background: #111722; border: 1px solid #1e2733; border-radius: 12px; padding: 14px 16px; }
+  .card .label { font-size: 12px; color: #9aa6b2; text-transform: uppercase; letter-spacing: .6px; }
+  .card .value { font-size: 30px; font-weight: 700; margin-top: 6px; }
+  .card .sub { font-size: 12px; color: #8b949e; margin-top: 4px; }
+  .red { color: #ff6b6b; } .amber { color: #ffd166; } .green { color: #4ade80; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+  .pill.crit { background: rgba(255,107,107,.15); color:#ff8a8a; border:1px solid rgba(255,107,107,.4); }
+  .pill.warn { background: rgba(255,209,102,.12); color:#ffe08a; border:1px solid rgba(255,209,102,.35); }
+  .bar { height: 10px; border-radius: 6px; background:#1e2733; margin-top:10px; overflow:hidden; }
+  .bar > span { display:block; height:100%; }
+  .wide { grid-column: span 3; }
+  .topo { display:flex; align-items:center; gap:14px; margin-top:6px; }
+  .node { padding:8px 14px; border-radius:10px; border:1px solid #2a3744; background:#0f1622; font-weight:600; }
+  .node.bad { border-color:#ff6b6b; background:rgba(255,107,107,.12); color:#ff8a8a; }
+  .node.ok  { border-color:#2f9e6b; color:#7ee2af; }
+  .arrow { color:#5b6776; font-size:18px; }
+  svg { display:block; margin-top:10px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>Production Overview <span class="pill crit">DATA TIER DEGRADED</span></h1>
+    <div class="env">cluster: prod-us-west-2 · primary: pg-orders-01 · 14:39 local</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">DB query latency · p99</div>
+      <div class="value red">487 ms <span class="pill crit">▲ 40×</span></div>
+      <div class="sub">baseline 12 ms · climbing since 14:31</div>
+      <svg width="300" height="48" viewBox="0 0 300 48">
+        <polyline fill="none" stroke="#ff6b6b" stroke-width="2"
+          points="0,44 40,43 80,42 120,40 150,36 180,28 210,18 240,12 270,7 300,4"/>
+      </svg>
+    </div>
+
+    <div class="card">
+      <div class="label">Connection pool · primary</div>
+      <div class="value red">198 / 200</div>
+      <div class="sub">99% saturated · 37 queries waiting for a connection</div>
+      <div class="bar"><span class="red" style="width:99%; background:#ff6b6b;"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Replica lag</div>
+      <div class="value amber">23.6 s <span class="pill warn">▲</span></div>
+      <div class="sub">read replicas falling behind primary</div>
+      <div class="bar"><span style="width:72%; background:#ffd166;"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Slow queries (&gt;1s)</div>
+      <div class="value red">312 / min</div>
+      <div class="sub">lock waits on orders, payment_intents</div>
+    </div>
+
+    <div class="card">
+      <div class="label">Primary CPU</div>
+      <div class="value amber">91%</div>
+      <div class="sub">IO wait elevated · checkpoint backlog</div>
+      <div class="bar"><span style="width:91%; background:#ffd166;"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="label">Checkout error rate</div>
+      <div class="value red">6.8%</div>
+      <div class="sub">write path (pay) failing · reads healthy</div>
+    </div>
+
+    <div class="card wide">
+      <div class="label">Service topology</div>
+      <div class="topo">
+        <span class="node ok">web</span>
+        <span class="arrow">→</span>
+        <span class="node ok">api-gateway</span>
+        <span class="arrow">→</span>
+        <span class="node">payments-svc</span>
+        <span class="arrow">→</span>
+        <span class="node bad">pg-orders-01 (primary) ⚠ saturated</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[Support escalation — forwarded to #incident-bridge by on-call lead, 14:41]
+
+Multiple enterprise customers are reporting that checkout is failing. The most
+common message from the storefront is "Payment could not be processed — please
+try again," and a few users just see a spinner that eventually errors out.
+
+- Acme Retail (Enterprise): "About 1 in 3 checkout attempts fails since ~2:30pm."
+- Northwind (Enterprise): orders stuck on the payment step, customers retrying.
+- Two more mid-market accounts opened tickets in the last 10 minutes.
+
+It started during the afternoon traffic ramp. Browsing and the product pages
+seem fine — it's specifically the final "Place order / pay" step that's
+throwing errors. No deploy was announced, but nobody's confirmed that.
+
+Revenue-impacting. Can we get eyes on this now?

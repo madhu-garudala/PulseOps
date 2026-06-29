@@ -1,0 +1,20 @@
+# api-gateway + payments-service — last ~12 min (text feed, UTC-7)
+
+14:30:58  api-gateway     INFO   POST /v1/checkout/pay  200  142ms
+14:31:20  api-gateway     INFO   POST /v1/checkout/pay  200  171ms
+14:32:04  api-gateway     WARN   POST /v1/checkout/pay  upstream latency 1.8s
+14:32:33  api-gateway     ERROR  POST /v1/checkout/pay  502  upstream request timeout
+14:32:51  payments-svc    ERROR  charge failed: upstream timeout after 2000ms
+14:33:09  api-gateway     ERROR  POST /v1/checkout/pay  500  internal error
+14:33:10  payments-svc    ERROR  charge failed: context deadline exceeded
+14:33:44  api-gateway     WARN   error budget burn: 5xx rate 6.1% (1m), p99 2.4s
+14:34:02  payments-svc    WARN   circuit breaker HALF_OPEN -> tripping
+14:34:05  payments-svc    ERROR  circuit breaker OPEN (downstream dependency)
+14:34:39  api-gateway     ERROR  POST /v1/checkout/pay  503  payments unavailable
+14:35:12  payments-svc    ERROR  charge failed: could not acquire resource (timeout)
+14:36:00  api-gateway     WARN   5xx rate 7.0% (1m), p99 3.1s, retries climbing
+14:37:18  payments-svc    ERROR  charge failed: upstream timeout after 2000ms
+14:38:41  api-gateway     ERROR  POST /v1/checkout/pay  500  internal error
+
+# Note: read traffic (GET /products, /cart) still mostly 200. Failures
+# concentrated on the write path that finalizes payment.
