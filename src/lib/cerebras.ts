@@ -53,6 +53,10 @@ export interface StructuredCallParams<T> {
   image?: ImageInput;
   maxCompletionTokens?: number;
   temperature?: number;
+  /** Strict constrained decoding (§4.3). Default true. Set false for schemas
+   *  where strict decoding is flaky (e.g. Commander's nested owners array) and
+   *  lean on Zod + the repair retry instead. */
+  strict?: boolean;
 }
 
 export interface StructuredCallResult<T> {
@@ -89,10 +93,23 @@ function extractContent(resp: unknown): string {
 
 type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
+/**
+ * Tolerant extraction of the top-level JSON object: strips markdown code fences,
+ * prose, or stray characters that non-strict generations sometimes add by taking
+ * the span from the first "{" to the last "}". Strict output is already clean, so
+ * this is a no-op there.
+ */
+function extractJsonObject(raw: string): string {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return raw.trim();
+  return raw.slice(start, end + 1);
+}
+
 function tryParseAndValidate<T>(content: string, validator: ZodType<T>): ParseResult<T> {
   let json: unknown;
   try {
-    json = JSON.parse(content);
+    json = JSON.parse(extractJsonObject(content));
   } catch (e) {
     return { ok: false, error: `JSON.parse failed: ${(e as Error).message}` };
   }
@@ -119,13 +136,14 @@ export async function callCerebrasStructured<T>(
     image,
     maxCompletionTokens = 2048,
     temperature = 0.2,
+    strict = true,
   } = params;
 
   const client = getClient();
 
   const response_format = {
     type: 'json_schema' as const,
-    json_schema: { name: schemaName, strict: true, schema: jsonSchema },
+    json_schema: { name: schemaName, strict, schema: jsonSchema },
   };
 
   const baseMessages = [
@@ -157,21 +175,32 @@ export async function callCerebrasStructured<T>(
   let repaired = false;
 
   // ---- one repair retry (only on validation failure) ----
+  // Implemented as a CLEAN re-roll: we deliberately do NOT feed the malformed
+  // output back. A truncated/degenerate response (e.g. a key-repetition loop
+  // that overruns max tokens) tends to reinforce itself if echoed. Re-issuing
+  // the original request with a terse anti-repetition nudge and slightly more
+  // sampling diversity recovers from that failure mode far more reliably.
   if (!parsed.ok) {
     repaired = true;
     const repairMessages = [
-      ...baseMessages,
-      { role: 'assistant' as const, content },
       {
-        role: 'user' as const,
+        role: 'system' as const,
         content:
-          `Your previous response did not satisfy the required JSON schema.\n` +
-          `Validation errors:\n${parsed.error}\n\n` +
-          `Return ONLY valid JSON that conforms exactly to the "${schemaName}" schema. No prose, no markdown.`,
+          system +
+          '\n\nIMPORTANT: Return ONLY compact, valid JSON matching the schema exactly. ' +
+          'Do not repeat keys or values; do not emit prose or markdown.',
       },
+      { role: 'user' as const, content: buildUserContent(user, image) },
     ];
     resp = await client.chat.completions.create({
       ...commonBody,
+      // On repair, drop strict constrained-decoding: free generation can't fall
+      // into the strict-decoder key-repetition loop, and Zod still validates.
+      response_format: {
+        type: 'json_schema' as const,
+        json_schema: { name: schemaName, strict: false, schema: jsonSchema },
+      },
+      temperature: Math.max(temperature, 0.4),
       messages: repairMessages,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);

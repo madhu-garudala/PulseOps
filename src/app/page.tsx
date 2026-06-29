@@ -1,18 +1,19 @@
 'use client';
 
 /**
- * PulseOps — the one beautiful moment (plan.md §7.1), one-shot floor.
+ * PulseOps — the one beautiful moment (§7.1) + Live Mode (§7.2).
  *
- * Left: incoming evidence. Center: agent cards revealing findings as staggered
- * checked bullets (never a "Thinking…" spinner, §4.1) + the visible callback
- * exchange. Right: the command plan snapping into place. Bottom: real per-agent
- * + total latency (§6). UI status is human, never a confidence decimal (§7.3).
+ * Two entry points share the SAME display surface:
+ *   • "Load Demo Incident"      — one-shot floor: paced staggered reveal (run()).
+ *   • "Simulate Live Incident"  — Live Mode: scripted evidence timeline re-runs
+ *                                 the chain each tick; severity/plan/customer
+ *                                 update/timeline mutate IN PLACE (runLive()).
  *
- * Content is 100% real (streamed from /api/incident/stream); only the reveal
- * pacing is presentation, so the motion reads on video even when Cerebras
- * returns near-instantly.
+ * The one-shot path is unchanged by Live Mode. Content is always real (streamed);
+ * only the one-shot reveal pacing is presentation. UI status is human, never a
+ * confidence decimal (§7.3).
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +32,16 @@ function deferred<T>() {
 
 type Ev<K extends IncidentEvent['type']> = Extract<IncidentEvent, { type: K }>;
 type CardState = 'idle' | 'active' | 'done';
+type Mode = 'idle' | 'oneshot' | 'live';
+
+interface LiveStepUI {
+  index: number;
+  label: string;
+  detail: string;
+  status: 'active' | 'done';
+  severity?: string;
+  warn?: boolean;
+}
 
 const SEV_CLASS: Record<string, string> = {
   SEV1: 'bg-red-600 text-white',
@@ -98,7 +109,7 @@ function AgentCard(props: {
         {status}
         <ul className="space-y-1.5 text-sm mt-2 min-h-[1rem]">
           {bullets.map((b, i) => (
-            <CheckBullet key={i} text={b} />
+            <CheckBullet key={`${b}-${i}`} text={b} />
           ))}
         </ul>
       </CardContent>
@@ -108,6 +119,7 @@ function AgentCard(props: {
 
 export default function Page() {
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
+  const [mode, setMode] = useState<Mode>('idle');
   const [error, setError] = useState<string | null>(null);
 
   const [inputs, setInputs] = useState<{ logs: string; complaint: string; screenshot?: string } | null>(
@@ -131,6 +143,7 @@ export default function Page() {
 
   const [commander, setCommander] = useState<Commander | null>(null);
   const [planIn, setPlanIn] = useState(false);
+  const [planHighlight, setPlanHighlight] = useState(false);
 
   const [perAgent, setPerAgent] = useState<{
     observer?: number;
@@ -140,8 +153,12 @@ export default function Page() {
   }>({});
   const [totals, setTotals] = useState<{ totalMs: number; imageTokens: number | null } | null>(null);
 
-  async function run() {
-    setPhase('running');
+  // Live Mode timeline rail
+  const [liveSteps, setLiveSteps] = useState<LiveStepUI[]>([]);
+  const [liveEvidence, setLiveEvidence] = useState<{ label: string; detail: string } | null>(null);
+  const planHlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function resetDisplay() {
     setError(null);
     setInputs(null);
     setObserver(null);
@@ -153,8 +170,24 @@ export default function Page() {
     setCallback(null);
     setCommander(null);
     setPlanIn(false);
+    setPlanHighlight(false);
     setPerAgent({});
     setTotals(null);
+    setLiveSteps([]);
+    setLiveEvidence(null);
+  }
+
+  function pulsePlan() {
+    setPlanHighlight(true);
+    if (planHlTimer.current) clearTimeout(planHlTimer.current);
+    planHlTimer.current = setTimeout(() => setPlanHighlight(false), 700);
+  }
+
+  // ---------- ONE-SHOT (unchanged floor behaviour) ----------
+  async function run() {
+    setPhase('running');
+    setMode('oneshot');
+    resetDisplay();
 
     const d = {
       input: deferred<Ev<'input'>>(),
@@ -165,7 +198,6 @@ export default function Page() {
       done: deferred<Ev<'done'>>(),
     };
 
-    // Network reader: resolve deferreds as NDJSON lines arrive.
     (async () => {
       try {
         const res = await fetch('/api/incident/stream');
@@ -193,7 +225,6 @@ export default function Page() {
       }
     })();
 
-    // Presentation director: real content, paced reveal so the motion reads.
     try {
       const inp = await d.input.promise;
       setInputs({ logs: inp.logs, complaint: inp.complaint, screenshot: inp.screenshotDataUri });
@@ -227,7 +258,7 @@ export default function Page() {
       if (cb.fired) {
         setCallback({ fired: true, question: cb.question, answer: cb.answer, showAnswer: false });
         if (cb.latencyMs) setPerAgent((p) => ({ ...p, callback: cb.latencyMs }));
-        await sleep(1100); // let the question read
+        await sleep(1100);
         setCallback({ fired: true, question: cb.question, answer: cb.answer, showAnswer: true });
         await sleep(700);
       } else {
@@ -239,7 +270,7 @@ export default function Page() {
       await sleep(250);
       setCommander(cmd.data);
       await sleep(30);
-      setPlanIn(true); // plan snaps into place
+      setPlanIn(true);
 
       const done = await d.done.promise;
       setTotals({ totalMs: done.latencies.totalMs, imageTokens: done.imageTokens });
@@ -250,8 +281,108 @@ export default function Page() {
     }
   }
 
+  // ---------- LIVE MODE (layered on top) ----------
+  function handleLiveAgent(index: number, ev: IncidentEvent) {
+    switch (ev.type) {
+      case 'input':
+        setInputs({ logs: ev.logs, complaint: ev.complaint, screenshot: ev.screenshotDataUri });
+        break;
+      case 'observer':
+        setObserver(ev.data);
+        setObsBullets(observerBullets(ev.data));
+        setObsState('done');
+        setPerAgent((p) => ({ ...p, observer: ev.latencyMs }));
+        break;
+      case 'triage':
+        setTriage(ev.data);
+        setTriBullets(triageBullets(ev.data));
+        setTriState('done');
+        setPerAgent((p) => ({ ...p, triage: ev.latencyMs }));
+        setLiveSteps((prev) =>
+          prev.map((s) => (s.index === index ? { ...s, severity: ev.data.severity } : s)),
+        );
+        break;
+      case 'callback':
+        if (ev.fired) {
+          setCallback({ fired: true, question: ev.question, answer: ev.answer, showAnswer: true });
+          if (ev.latencyMs) setPerAgent((p) => ({ ...p, callback: ev.latencyMs }));
+        } else {
+          setCallback(null);
+        }
+        break;
+      case 'commander':
+        setCommander(ev.data);
+        setPlanIn(true);
+        pulsePlan();
+        setPerAgent((p) => ({ ...p, commander: ev.latencyMs }));
+        break;
+      case 'done':
+        setTotals({ totalMs: ev.latencies.totalMs, imageTokens: ev.imageTokens });
+        break;
+    }
+  }
+
+  async function runLive() {
+    setPhase('running');
+    setMode('live');
+    resetDisplay();
+
+    try {
+      const res = await fetch('/api/incident/live');
+      if (!res.body) throw new Error('No response stream');
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const msg = JSON.parse(line);
+          if (msg.t === 'tick_start') {
+            setLiveEvidence({ label: msg.label, detail: msg.detail });
+            setObsState('active');
+            setTriState('active');
+            setLiveSteps((prev) => {
+              if (prev.some((s) => s.index === msg.index)) return prev;
+              return [...prev, { index: msg.index, label: msg.label, detail: msg.detail, status: 'active' }];
+            });
+          } else if (msg.t === 'agent') {
+            handleLiveAgent(msg.index, msg.event as IncidentEvent);
+          } else if (msg.t === 'tick_end') {
+            setLiveSteps((prev) =>
+              prev.map((s) => (s.index === msg.index ? { ...s, status: 'done' } : s)),
+            );
+          } else if (msg.t === 'tick_error') {
+            // Non-fatal: this tick's chain failed. Keep the last good plan on
+            // screen, flag the step, and let the run continue.
+            setObsState('done');
+            setTriState('done');
+            setLiveSteps((prev) =>
+              prev.map((s) => (s.index === msg.index ? { ...s, status: 'done', warn: true } : s)),
+            );
+          } else if (msg.t === 'done') {
+            setPhase('done');
+            setLiveEvidence(null);
+          } else if (msg.t === 'error') {
+            setError(msg.error);
+          }
+        }
+      }
+      setPhase('done');
+    } catch (e) {
+      setError((e as Error).message);
+      setPhase('done');
+    }
+  }
+
   const sev = triage?.severity;
   const status = triage ? triageStatus(triage) : null;
+  const running = phase === 'running';
 
   return (
     <div className="flex flex-col min-h-full">
@@ -263,15 +394,46 @@ export default function Page() {
             Real-time AI incident command center · Cerebras × Gemma 4 31B
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-3">
-          <span className="hidden md:block text-xs text-muted-foreground">
-            Incident&nbsp;starts → Evidence → Agents&nbsp;react → Plan → Customer&nbsp;update
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden lg:block text-xs text-muted-foreground mr-2">
+            Incident&nbsp;starts → Evidence&nbsp;evolves → Agents&nbsp;react → Plan&nbsp;changes
           </span>
-          <Button onClick={run} disabled={phase === 'running'}>
-            {phase === 'running' ? 'Running…' : '▶ Load Demo Incident'}
+          <Button variant="outline" onClick={run} disabled={running}>
+            {running && mode === 'oneshot' ? 'Running…' : 'Load Demo Incident'}
+          </Button>
+          <Button onClick={runLive} disabled={running}>
+            {running && mode === 'live' ? 'Live…' : '▶ Simulate Live Incident'}
           </Button>
         </div>
       </header>
+
+      {/* Live timeline rail */}
+      {mode === 'live' && liveSteps.length > 0 && (
+        <div className="border-b px-6 py-2 flex items-center gap-2 overflow-x-auto">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground shrink-0">
+            Evidence timeline
+          </span>
+          {liveSteps.map((s, i) => (
+            <div key={s.index} className="flex items-center gap-2 shrink-0">
+              {i > 0 && <span className="text-border">→</span>}
+              <div
+                className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-all duration-300 ${
+                  s.status === 'active' ? 'border-primary ring-1 ring-primary/40' : 'opacity-90'
+                }`}
+              >
+                <span className="font-medium">{s.label}</span>
+                {s.severity && <Badge className={`${SEV_CLASS[s.severity]} text-[10px]`}>{s.severity}</Badge>}
+                {s.warn && <span title="plan update skipped this tick" className="text-amber-400">⚠</span>}
+              </div>
+            </div>
+          ))}
+          {liveEvidence && (
+            <span className="text-xs text-muted-foreground italic ml-2 shrink-0">
+              ← {liveEvidence.detail}
+            </span>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="mx-6 mt-3 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
@@ -291,13 +453,14 @@ export default function Page() {
               {inputs?.screenshot ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  key={inputs.screenshot.slice(-24)}
                   src={inputs.screenshot}
                   alt="incident dashboard screenshot"
                   className="w-full rounded-md border animate-in fade-in duration-500"
                 />
               ) : (
                 <div className="aspect-[2/1] w-full rounded-md border border-dashed grid place-items-center text-xs text-muted-foreground">
-                  dashboard screenshot
+                  {mode === 'live' ? 'no dashboard yet' : 'dashboard screenshot'}
                 </div>
               )}
               <div>
@@ -322,16 +485,18 @@ export default function Page() {
 
         {/* CENTER — agents */}
         <section className="space-y-3">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Agents
-          </h2>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Agents</h2>
 
-          {phase === 'idle' ? (
+          {mode === 'idle' ? (
             <Card className="grid place-items-center py-16 text-center">
-              <CardContent>
+              <CardContent className="space-y-1">
                 <p className="text-sm text-muted-foreground">
-                  Click <span className="font-medium text-foreground">▶ Load Demo Incident</span> to
-                  watch the command center react.
+                  <span className="font-medium text-foreground">Load Demo Incident</span> runs the
+                  one-shot analysis.
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">▶ Simulate Live Incident</span> plays
+                  an evolving incident — watch severity &amp; plan mutate.
                 </p>
               </CardContent>
             </Card>
@@ -373,7 +538,6 @@ export default function Page() {
                 }
               />
 
-              {/* Callback exchange */}
               {callback?.fired && (
                 <Card className="border-primary/40 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <CardContent className="p-3 space-y-2 text-sm">
@@ -409,7 +573,7 @@ export default function Page() {
             <Card
               className={`transition-all duration-500 ${
                 planIn ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-3 scale-[0.98]'
-              }`}
+              } ${planHighlight ? 'ring-2 ring-primary/60' : ''}`}
             >
               <CardHeader className="pb-2">
                 <div className="flex items-center gap-2">
@@ -472,17 +636,19 @@ export default function Page() {
 
       {/* BOTTOM — real latency strip (§6) */}
       <footer className="border-t px-6 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
-        <span className="text-muted-foreground uppercase tracking-wider">Latency (live)</span>
+        <span className="text-muted-foreground uppercase tracking-wider">
+          Latency {mode === 'live' ? '(latest tick)' : '(live)'}
+        </span>
         <Lat label="🛰️ Observer" ms={perAgent.observer} />
         <Lat label="🚨 Triage" ms={perAgent.triage} />
         <Lat label="↔️ Callback" ms={perAgent.callback} />
         <Lat label="🎯 Commander" ms={perAgent.commander} />
         <span className="text-border">|</span>
         <span className="font-semibold">
-          Total chain:{' '}
+          {mode === 'live' ? 'Tick chain:' : 'Total chain:'}{' '}
           {totals ? `${(totals.totalMs / 1000).toFixed(2)}s` : <span className="text-muted-foreground">—</span>}
         </span>
-        {totals?.imageTokens != null && (
+        {totals?.imageTokens != null && totals.imageTokens > 0 && (
           <span className="text-muted-foreground">· {totals.imageTokens} image tokens</span>
         )}
       </footer>

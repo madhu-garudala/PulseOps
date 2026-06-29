@@ -16,7 +16,13 @@ const SYSTEM = `You are Triage in an incident command center. Given the Observer
 object and the raw evidence, assess the incident. Return JSON for the Triage schema.
 
 Fields:
-- severity: SEV1 (critical, broad customer/revenue impact) .. SEV4 (minor).
+- severity: reflect the CURRENT customer/business impact given the LATEST evidence, not the
+  worst the incident ever was. SEV1 = critical, broad, active impact (e.g. checkout broadly
+  failing right now). SEV2 = significant but narrower, unconfirmed, or partially mitigated.
+  SEV3/SEV4 = minor or largely recovered. If the latest evidence shows the incident is
+  actively recovering (error rates back near baseline, healthy metrics, customers confirming
+  success), DOWNGRADE accordingly — an incident in recovery is not SEV1, even if the logs
+  still contain the earlier failures.
 - primary_hypothesis: your single best guess at the ROOT CAUSE (a short sentence).
 - confidence: your calibrated probability (0.0–1.0) that primary_hypothesis is the ACTUAL
   root cause — NOT your confidence in the severity. Be honest and well-calibrated:
