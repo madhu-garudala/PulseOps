@@ -32,7 +32,23 @@ function deferred<T>() {
 
 type Ev<K extends IncidentEvent['type']> = Extract<IncidentEvent, { type: K }>;
 type CardState = 'idle' | 'active' | 'done';
-type Mode = 'idle' | 'oneshot' | 'live';
+type Mode = 'idle' | 'oneshot' | 'live' | 'baseline';
+
+interface BaselineRes {
+  provider: string;
+  model: string;
+  ttftMs: number | null;
+  totalMs: number;
+  outputTokens: number | null;
+  tokensPerSec: number | null;
+  preview: string;
+}
+type BaselineSide = { ok: true; result: BaselineRes } | { ok: false; error: string };
+interface BaselineData {
+  cerebras: BaselineSide;
+  openai: BaselineSide;
+  speedup: number | null;
+}
 
 interface LiveStepUI {
   index: number;
@@ -157,6 +173,9 @@ export default function Page() {
   const [liveSteps, setLiveSteps] = useState<LiveStepUI[]>([]);
   const [liveEvidence, setLiveEvidence] = useState<{ label: string; detail: string } | null>(null);
   const planHlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Baseline (§6)
+  const [baseline, setBaseline] = useState<BaselineData | null>(null);
 
   function resetDisplay() {
     setError(null);
@@ -380,6 +399,26 @@ export default function Page() {
     }
   }
 
+  async function runBaseline() {
+    setMode('baseline');
+    setPhase('running');
+    resetDisplay();
+    setBaseline(null);
+    try {
+      const res = await fetch('/api/baseline');
+      const json = await res.json();
+      if (!json.ok) {
+        setError(json.error ?? 'Baseline failed');
+      } else {
+        setBaseline({ cerebras: json.cerebras, openai: json.openai, speedup: json.speedup });
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPhase('done');
+    }
+  }
+
   const sev = triage?.severity;
   const status = triage ? triageStatus(triage) : null;
   const running = phase === 'running';
@@ -403,6 +442,9 @@ export default function Page() {
           </Button>
           <Button onClick={runLive} disabled={running}>
             {running && mode === 'live' ? 'Live…' : '▶ Simulate Live Incident'}
+          </Button>
+          <Button variant="secondary" onClick={runBaseline} disabled={running}>
+            {running && mode === 'baseline' ? 'Measuring…' : '⚡ Speed Baseline'}
           </Button>
         </div>
       </header>
@@ -441,8 +483,15 @@ export default function Page() {
         </div>
       )}
 
+      {/* Baseline comparison (§6) — separate focused view */}
+      {mode === 'baseline' && <BaselineView data={baseline} running={running} />}
+
       {/* Main 3-column stage */}
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_380px] gap-4 p-4 sm:p-6">
+      <main
+        className={`flex-1 grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_380px] gap-4 p-4 sm:p-6 ${
+          mode === 'baseline' ? 'hidden' : ''
+        }`}
+      >
         {/* LEFT — evidence */}
         <section className="space-y-3">
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -635,7 +684,11 @@ export default function Page() {
       </main>
 
       {/* BOTTOM — real latency strip (§6) */}
-      <footer className="border-t px-6 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+      <footer
+        className={`border-t px-6 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs ${
+          mode === 'baseline' ? 'hidden' : ''
+        }`}
+      >
         <span className="text-muted-foreground uppercase tracking-wider">
           Latency {mode === 'live' ? '(latest tick)' : '(live)'}
         </span>
@@ -677,5 +730,100 @@ function Lat({ label, ms }: { label: string; ms?: number }) {
         <span className="text-muted-foreground">—</span>
       )}
     </span>
+  );
+}
+
+function BaselineMetric({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-md border bg-muted/40 p-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-base font-semibold tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+function BaselineCard({
+  title,
+  side,
+  highlight,
+}: {
+  title: string;
+  side: BaselineSide;
+  highlight?: boolean;
+}) {
+  if (!side.ok) {
+    return (
+      <Card className="opacity-90">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-orange-400">Unavailable — {side.error}</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            No number is shown rather than a fabricated one.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+  const r = side.result;
+  return (
+    <Card className={highlight ? 'ring-2 ring-emerald-500/60' : ''}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          {title}
+          {highlight && <Badge className="bg-emerald-600 text-white">primary</Badge>}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground font-mono">{r.model}</p>
+      </CardHeader>
+      <CardContent>
+        <div className="text-4xl font-bold tabular-nums">
+          {(r.totalMs / 1000).toFixed(2)}s{' '}
+          <span className="text-sm font-normal text-muted-foreground">wall-clock</span>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <BaselineMetric label="TTFT" value={r.ttftMs != null ? `${r.ttftMs}ms` : '—'} />
+          <BaselineMetric label="tokens/s" value={r.tokensPerSec ?? '—'} />
+          <BaselineMetric label="output tok" value={r.outputTokens ?? '—'} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BaselineView({ data, running }: { data: BaselineData | null; running: boolean }) {
+  return (
+    <main className="flex-1 p-6 max-w-4xl mx-auto w-full">
+      <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
+        Speed baseline — same multimodal call, measured live
+      </h2>
+
+      {data?.speedup && data.cerebras.ok && data.openai.ok && (
+        <p className="text-2xl font-semibold mb-4">
+          Cerebras was{' '}
+          <span className="text-emerald-400">{data.speedup}× faster</span> on wall-clock.
+        </p>
+      )}
+
+      {running && !data ? (
+        <p className="text-sm text-muted-foreground py-10">
+          Running one identical call on both providers, live… (Cerebras, then OpenAI)
+        </p>
+      ) : data ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <BaselineCard title="Cerebras" side={data.cerebras} highlight />
+            <BaselineCard title="OpenAI" side={data.openai} />
+          </div>
+          <p className="text-xs text-muted-foreground mt-4">
+            One identical call — same incident prompt, same dashboard image, same 400-token cap,
+            same temperature — measured live just now on each provider. Nothing is hardcoded,
+            cached, or estimated. TTFT = time to first token.
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground py-10">Click ⚡ Speed Baseline to measure.</p>
+      )}
+    </main>
   );
 }

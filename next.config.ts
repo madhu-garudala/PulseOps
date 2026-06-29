@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   // would 500 with ENOENT. Explicitly include them in the trace.
   outputFileTracingIncludes: {
     "/api/incident/stream": ["./data/sample-incident/**/*"],
+    "/api/incident/live": ["./data/sample-incident/**/*"],
+    "/api/baseline": ["./data/sample-incident/**/*"],
     "/api/run-chain": ["./data/sample-incident/**/*"],
   },
 };
